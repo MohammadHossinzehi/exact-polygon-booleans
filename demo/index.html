@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>exact polygon booleans: live demo</title>
+<style>
+  :root { --a: #2563eb; --b: #dc2626; --r: #0f172a; --bg: #f8fafc; --muted: #64748b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--r); }
+  header { padding: 14px 18px 4px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p { margin: 0; color: var(--muted); }
+  .bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 10px 18px; }
+  select, button { font: inherit; padding: 4px 8px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; }
+  canvas { display: block; margin: 0 18px; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px;
+           touch-action: none; max-width: calc(100% - 36px); }
+  #info { padding: 10px 18px 24px; font-family: ui-monospace, monospace; font-size: 12px; white-space: pre-wrap;
+          color: #334155; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Exact polygon booleans</h1>
+  <p>Drag any vertex. Double click an edge to add a vertex. Every crossing, overlap and touch is resolved in exact rational arithmetic.</p>
+</header>
+<div class="bar">
+  <label>operation
+    <select id="op">
+      <option>union</option><option selected>intersection</option><option>difference</option><option>xor</option>
+    </select>
+  </label>
+  <label>fill rule
+    <select id="fill"><option>evenodd</option><option>nonzero</option></select>
+  </label>
+  <button id="snap">snap to grid: on</button>
+  <button id="reset">reset</button>
+  <span><span class="sw" style="background:var(--a)"></span>A <span class="sw" style="background:var(--b)"></span>B</span>
+</div>
+<canvas id="cv" width="760" height="520"></canvas>
+<div id="info"></div>
+<script type="module">
+import { overlayShapes, area } from '../src/index.js';
+
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const info = document.getElementById('info');
+const opSel = document.getElementById('op');
+const fillSel = document.getElementById('fill');
+const snapBtn = document.getElementById('snap');
+const GRID = 20;
+let snap = true;
+
+const initial = () => ({
+  A: [[120, 100], [420, 100], [420, 400], [120, 400]],
+  B: [[300, 60], [640, 240], [300, 460], [200, 240], [520, 160], [520, 340]],
+});
+let shapes = initial();
+
+const preds = {
+  union: (x) => x[0] || x[1],
+  intersection: (x) => x[0] && x[1],
+  difference: (x) => x[0] && !x[1],
+  xor: (x) => x[0] !== x[1],
+};
+
+function trace(ring) {
+  ctx.moveTo(ring[0][0], ring[0][1]);
+  for (let i = 1; i < ring.length; i++) ctx.lineTo(ring[i][0], ring[i][1]);
+  ctx.closePath();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.strokeStyle = '#f1f5f9';
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= cv.width; x += GRID) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, cv.height); ctx.stroke(); }
+  for (let y = 0; y <= cv.height; y += GRID) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(cv.width, y); ctx.stroke(); }
+
+  const fill = fillSel.value;
+  const t0 = performance.now();
+  let result, stats, err = null;
+  try {
+    ({ result, stats } = overlayShapes([shapes.A, shapes.B], preds[opSel.value], { fillRule: fill, stats: true }));
+  } catch (e) { err = e; }
+  const ms = performance.now() - t0;
+
+  if (result) {
+    ctx.beginPath();
+    for (const poly of result) for (const ring of poly) trace(ring);
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.22)';
+    ctx.fill('nonzero');
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+  }
+  for (const [name, color] of [['A', '#2563eb'], ['B', '#dc2626']]) {
+    ctx.beginPath(); trace(shapes[name]);
+    ctx.setLineDash([5, 4]); ctx.strokeStyle = color; ctx.lineWidth = 1.2; ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = color;
+    for (const [x, y] of shapes[name]) { ctx.beginPath(); ctx.arc(x, y, 4.5, 0, Math.PI * 2); ctx.fill(); }
+  }
+
+  if (err) { info.textContent = `error: ${err.message}`; return; }
+  const exactRes = overlayShapes([shapes.A, shapes.B], preds[opSel.value], { fillRule: fill, exact: true });
+  const a = area(exactRes);
+  const holes = result.reduce((n, p) => n + p.length - 1, 0);
+  info.textContent =
+    `${opSel.value}(A, B) under ${fill}: ${result.length} polygon(s), ${holes} hole(s)\n` +
+    `exact area: ${a.exact} (canvas y points down, so "outer" rings appear clockwise here)\n` +
+    `${stats.edges} input edges, ${stats.segments} split segments, ${stats.pairTests} exact pair tests, ${ms.toFixed(1)} ms`;
+}
+
+let drag = null;
+function pos(ev) {
+  const r = cv.getBoundingClientRect();
+  return [(ev.clientX - r.left) * (cv.width / r.width), (ev.clientY - r.top) * (cv.height / r.height)];
+}
+cv.addEventListener('pointerdown', (ev) => {
+  const [x, y] = pos(ev);
+  for (const name of ['B', 'A']) {
+    const i = shapes[name].findIndex(([px, py]) => Math.hypot(px - x, py - y) < 10);
+    if (i >= 0) { drag = { name, i }; cv.setPointerCapture(ev.pointerId); return; }
+  }
+});
+cv.addEventListener('pointermove', (ev) => {
+  if (!drag) return;
+  let [x, y] = pos(ev);
+  if (snap) { x = Math.round(x / GRID) * GRID; y = Math.round(y / GRID) * GRID; }
+  shapes[drag.name][drag.i] = [x, y];
+  draw();
+});
+cv.addEventListener('pointerup', () => { drag = null; });
+cv.addEventListener('dblclick', (ev) => {
+  const [x, y] = pos(ev);
+  let best = null;
+  for (const name of ['A', 'B']) {
+    const ring = shapes[name];
+    ring.forEach((p, i) => {
+      const q = ring[(i + 1) % ring.length];
+      const dx = q[0] - p[0], dy = q[1] - p[1];
+      const t = Math.max(0, Math.min(1, ((x - p[0]) * dx + (y - p[1]) * dy) / (dx * dx + dy * dy || 1)));
+      const d = Math.hypot(p[0] + t * dx - x, p[1] + t * dy - y);
+      if (!best || d < best.d) best = { name, i, d };
+    });
+  }
+  if (best && best.d < 12) {
+    const pt = snap ? [Math.round(x / GRID) * GRID, Math.round(y / GRID) * GRID] : [x, y];
+    shapes[best.name].splice(best.i + 1, 0, pt);
+    draw();
+  }
+});
+opSel.onchange = fillSel.onchange = draw;
+snapBtn.onclick = () => { snap = !snap; snapBtn.textContent = `snap to grid: ${snap ? 'on' : 'off'}`; };
+document.getElementById('reset').onclick = () => { shapes = initial(); draw(); };
+draw();
+</script>
+</body>
+</html>
