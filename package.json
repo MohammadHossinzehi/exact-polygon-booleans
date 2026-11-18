@@ -1,0 +1,23 @@
+{
+  "name": "exact-polygon-booleans",
+  "version": "1.0.0",
+  "description": "Robust polygon boolean operations (union, intersection, difference, xor, k-coverage) in exact rational arithmetic. Zero dependencies.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./rational": "./src/rational.js"
+  },
+  "bin": {
+    "polybool": "bin/polybool.js"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "bench": "node bench/bench.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": ["polygon", "clipping", "boolean", "geometry", "computational-geometry", "exact-arithmetic", "geojson"],
+  "license": "MIT"
+}
